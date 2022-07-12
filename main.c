@@ -19,26 +19,22 @@
 #include "Util/fat_fs/inc/integer.h"
 #include "Util/fat_fs/inc/rtc.h"
 
-
 //newlib reent context
-    struct _reent my_reent;
-     
-
-
+struct _reent my_reent;
 //Global variables - other files (e.g. hardware interface/drivers) may have their own globals
-extern uint16_t MAL_Init (uint8_t lun);			//For the USB filesystem driver
-volatile uint8_t file_opened=0;				//So we know to close any opened files before turning off
+extern uint16_t MAL_Init (uint8_t lun);	//For the USB filesystem driver
+volatile uint8_t file_opened=0;			//So we know to close any opened files before turning off
 uint8_t print_string[256];				//For printf data
-UINT a;							//File bytes counter
-volatile buff_type Buff[PPG_CHANNELS];			//Shared with ISR
-volatile uint8_t Pressure_control;			//Enables the pressure control PI
-volatile float Pressure_Setpoint;			//Target differential pressure for the pump
+UINT a;							        //File bytes counter
+volatile buff_type Buff[PPG_CHANNELS];	//Shared with ISR
+volatile uint8_t Pressure_control;		//Enables the pressure control PI
+volatile float Pressure_Setpoint;		//Target differential pressure for the pump
 volatile uint32_t Millis;				//System uptime (rollover after 50 days)
-volatile uint8_t System_state_Global;			//Stores the system state, controlled by the button, most significant bit is a flag
+volatile uint8_t System_state_Global;	//Stores the system state, controlled by the button, most significant bit is a flag
 volatile uint8_t Sensors;				//Global holding a mask of the sensors found by automatic sensor discovery
-volatile uint8_t Shutdown_System;			//Used to order a system shutdown to sleep mode
+volatile uint8_t Shutdown_System;		//Used to order a system shutdown to sleep mode
 //Sensor buffers to pass data back to logger
-volatile buff_type Temperatures_Buffer;			//Data from temperature sensor
+volatile buff_type Temperatures_Buffer;	//Data from temperature sensor
 volatile buff_type Thermistor_Buffer;	
 volatile buff_type Pressures_Buffer;
 //FatFs filesystem globals go here
@@ -48,35 +44,35 @@ FIL FATFS_logfile;
 FILINFO FATFS_info;
 //volatile int bar[3] __attribute__ ((section (".noinit"))) ;//= 0xaa
 
-int main(void)
-{
+int main(void){
 	uint32_t ppg;					//PPG channel
-	uint32_t data_counter=0;			//used as data timestamp
-	uint8_t system_state=0;				//used to track button press functionality
+	uint32_t data_counter=0;		//used as data timestamp
+	uint8_t system_state=0;			//used to track button press functionality
 	float sensor_data;				//used for handling data passed back from sensors
 	RTC_t RTC_time;
-        _REENT_INIT_PTR(&my_reent);
-        _impure_ptr = &my_reent;
-	SystemInit();					//Sets up the clk
-	setup_gpio();					//Initialised pins, and detects boot source
-	DBGMCU_Config(DBGMCU_IWDG_STOP, ENABLE);	//Watchdog stopped during JTAG halt
-	if(RCC->CSR&RCC_CSR_IWDGRSTF) {			//Watchdog reset, turn off
-		RCC->CSR|=RCC_CSR_RMVF;			//Reset the reset flags
+    _REENT_INIT_PTR(&my_reent);
+    _impure_ptr = &my_reent;
+	SystemInit();						     //Sets up the clk
+	setup_gpio();							 //Initialised pins, and detects boot source
+	DBGMCU_Config(DBGMCU_IWDG_STOP, ENABLE); //Watchdog stopped during JTAG halt
+	if(RCC->CSR&RCC_CSR_IWDGRSTF) {			 //Watchdog reset, turn off
+		RCC->CSR|=RCC_CSR_RMVF;			     //Reset the reset flags
 		shutdown();
 	}
 	SysTick_Configuration();			//Start up system timer at 100Hz for uSD card functionality
-	Watchdog_Config(WATCHDOG_TIMEOUT);		//Set the watchdog
-	Watchdog_Reset();				//Reset watchdog as soon as possible incase it is still running at power on
-	rtc_init();					//Real time clock initialise - (keeps time unchanged if set)
+	Watchdog_Config(WATCHDOG_TIMEOUT);	//Set the watchdog
+	Watchdog_Reset();					//Reset watchdog as soon as possible incase it is still running at power on
+	rtc_init();					    	//Real time clock initialise - (keeps time unchanged if set)
 	Usarts_Init();
 	ISR_Config();
 	rprintfInit(__usart_send_char);			//Printf over the bluetooth
+	
 	if(USB_SOURCE==bootsource) {
 		Set_System();				//This actually just inits the storage layer
 		Set_USBClock();
 		USB_Interrupts_Config();
 		USB_Init();
-		uint32_t nojack=0x000FFFFF;		//Countdown timer - a few hundered ms of 0v on jack detect forces a shutdown
+		uint32_t nojack=0x000FFFFF;				//Countdown timer - a few hundered ms of 0v on jack detect forces a shutdown
 		while (bDeviceState != CONFIGURED) {	//Wait for USB config - timeout causes shutdown
 			if((Millis>10000 && bDeviceState == UNCONNECTED)|| !nojack)	//No USB cable - shutdown (Charger pin will be set to open drain, cant be disabled without usb)
 				shutdown();
@@ -87,36 +83,37 @@ int main(void)
 		}
 		USB_Configured_LED();
 		EXTI_ONOFF_EN();			//Enable the off interrupt - allow some time for debouncing
-		while(1) {				//If running off USB (mounted as mass storage), stay in this loop - dont turn on anything
-			if(Millis%1000>500)		//1Hz on/off flashing
+		while(1) {					//If running off USB (mounted as mass storage), stay in this loop - dont turn on anything
+			if(Millis % 1000 > 500)	//1Hz on/off flashing
 				switch_leds_on();	//Flash the LED(s)
 			else
 				switch_leds_off();
 			Watchdog_Reset();
-			__WFI();			//Sleep mode
+			__WFI();			    //Sleep mode
 		}
 	}
 	if(!GET_PWR_STATE)				//Check here to make sure the power button is still pressed, if not, sleep
-		shutdown();				//This means a glitch on the supply line, or a power glitch results in sleep
-	for(uint8_t n=0;n<PPG_CHANNELS;n++)
+		shutdown();					//This means a glitch on the supply line, or a power glitch results in sleep
+	for(uint8_t n=0;n<PPG_CHANNELS;n++){
 		init_buffer(&(Buff[n]),PPG_BUFFER_SIZE);//Enough for ~0.25S of data
+	}
 	setup_pwm();					//Enable the PWM outputs on all three channels
 	Delay(100000);					//Sensor+inst amplifier takes about 100ms to stabilise after power on
-	ADC_Configuration();				//We leave this a bit later to allow stabilisation
+	ADC_Configuration();			//We leave this a bit later to allow stabilisation
 	calibrate_sensor();				//Calibrate the offset on the diff pressure sensor
 	EXTI_ONOFF_EN();				//Enable the off interrupt - allow some time for debouncing
 	I2C_Config();					//Setup the I2C bus
-	uint8_t sensors_=detect_sensors();		//Search for connected sensors
+	uint8_t sensors_ = detect_sensors();//Search for connected sensors
 	uint8_t Oversaturation=0;			//Use this to detect oversaturating adc input
 	uint8_t Undersaturation=0;			//Use to detect a misapplied sensor
-	sensor_data=GET_BATTERY_VOLTAGE;		//Have to flush adc for some reason
+	sensor_data = GET_BATTERY_VOLTAGE;	//Have to flush adc for some reason
 	Delay(10000);
 	if(!(sensors_&~(1<<PRESSURE_HOSE))||GET_BATTERY_VOLTAGE<BATTERY_STARTUP_LIMIT) {//We will have to turn off
 		Watchdog_Reset();			//LED flashing takes a while
 		if(abs(Reported_Pressure)>PRESSURE_MARGIN)
 			Set_Motor(-1);			//If the is air backpressure, dump to rapidly drop to zero pressure before turnoff
 		if(file_opened)
-			f_close(&FATFS_logfile);	//be sure to terminate file neatly
+			f_close(&FATFS_logfile);//be sure to terminate file neatly
 		red_flash();
 		Delay(400000);
 		red_flash();				//Two flashes means battery abort -----------------ABORT 2
@@ -126,50 +123,55 @@ int main(void)
 		red_flash();				//Three flashes means no sensors abort ------------ABORT 3
 		shutdown();
 	}
-	if((f_err_code = f_mount(0, &FATFS_Obj)))Usart_Send_Str((char*)"FatFs mount error\r\n");//This should only error if internal error
+	//This should only error if internal error
+	if((f_err_code = f_mount(0, &FATFS_Obj))) Usart_Send_Str( (char*)"FatFs mount error\r\n" );
 	else {						//FATFS initialised ok, try init the card, this also sets up the SPI1
-		if(!f_open(&FATFS_logfile,"time.txt",FA_OPEN_EXISTING | FA_READ | FA_WRITE)) {//Try and open a time file to get the system time
-			if(!f_stat((const TCHAR *)"time.txt",&FATFS_info)) {//Get file info
+		if(!f_open(&FATFS_logfile,"time.txt",FA_OPEN_EXISTING | FA_READ | FA_WRITE)){//Try and open a time file to get the system time
+			if(!f_stat((const TCHAR *)"time.txt", &FATFS_info)){//Get file info
 				if(!FATFS_info.fsize) {	//Empty file
-					RTC_time.year=(FATFS_info.fdate>>9)+1980;//populate the time struct (FAT start==1980, RTC.year==0)
-					RTC_time.month=(FATFS_info.fdate>>5)&0x000F;
-					RTC_time.mday=FATFS_info.fdate&0x001F;
-					RTC_time.hour=(FATFS_info.ftime>>11)&0x001F;
-					RTC_time.min=(FATFS_info.ftime>>5)&0x003F;
-					RTC_time.sec=(FATFS_info.ftime<<1)&0x003E;
+					RTC_time.year  = (FATFS_info.fdate>>9)+1980;//populate the time struct (FAT start==1980, RTC.year==0)
+					RTC_time.month = (FATFS_info.fdate>>5)&0x000F;
+					RTC_time.mday  = FATFS_info.fdate&0x001F;
+					RTC_time.hour  = (FATFS_info.ftime>>11)&0x001F;
+					RTC_time.min   = (FATFS_info.ftime>>5)&0x003F;
+					RTC_time.sec   = (FATFS_info.ftime<<1)&0x003E;
 					rtc_settime(&RTC_time);
 					rprintfInit(__fat_print_char);//printf to the open file
-					printf("RTC set to %d/%d/%d %d:%d:%d\n",RTC_time.mday,RTC_time.month,RTC_time.year,\
-					RTC_time.hour,RTC_time.min,RTC_time.sec);
+					printf("RTC set to %d/%d/%d %d:%d:%d\n", RTC_time.mday, RTC_time.month, RTC_time.year,\
+					RTC_time.hour, RTC_time.min, RTC_time.sec);
 				}				
 			}
 			f_close(&FATFS_logfile);	//Close the time.txt file
 		}
 #ifndef SINGLE_LOGFILE
 		rtc_gettime(&RTC_time);			//Get the RTC time and put a timestamp on the start of the file
-		rprintfInit(__str_print_char);		//Print to the string
+		rprintfInit(__str_print_char);	//Print to the string
 		printf("%02d-%02d-%02dT%02d-%02d-%02d.csv",RTC_time.year,RTC_time.month,RTC_time.mday,RTC_time.hour,RTC_time.min,RTC_time.sec);//Timestamp name
-		rprintfInit(__usart_send_char);		//Printf over the bluetooth
+		rprintfInit(__usart_send_char);	//Printf over the bluetooth
 #endif
-		if((f_err_code=f_open(&FATFS_logfile,LOGFILE_NAME,FA_CREATE_ALWAYS | FA_WRITE))) {//Present
+		if((f_err_code=f_open(&FATFS_logfile,LOGFILE_NAME,FA_CREATE_ALWAYS | FA_WRITE))){//Present
 			printf("FatFs drive error %d\r\n",f_err_code);
 			if(f_err_code==FR_DISK_ERR || f_err_code==FR_NOT_READY)
 				Usart_Send_Str((char*)"No uSD card inserted?\r\n");
 		}
-		else {					//We have a mounted card
-			f_err_code=f_lseek(&FATFS_logfile, PRE_SIZE);// Pre-allocate clusters
+		else{
+			// We have a mounted card
+			f_err_code = f_lseek(&FATFS_logfile, PRE_SIZE);// Pre-allocate clusters
 			if (f_err_code || f_tell(&FATFS_logfile) != PRE_SIZE)// Check if the file size has been increased correctly
 				Usart_Send_Str((char*)"Pre-Allocation error\r\n");
-			else {
-				if((f_err_code=f_lseek(&FATFS_logfile, 0)))//Seek back to start of file to start writing
+			else{
+				if((f_err_code = f_lseek(&FATFS_logfile, 0)))//Seek back to start of file to start writing
 					Usart_Send_Str((char*)"Seek error\r\n");
 				else
 					rprintfInit(__str_print_char);//Printf to the logfile
 			}
-			if(f_err_code)
-				f_close(&FATFS_logfile);//Close the already opened file on error
-			else
+			if(f_err_code){
+				//Close the already opened file on error
+				f_close(&FATFS_logfile);
+			}
+			else{
 				file_opened=1;		//So we know to close the file properly on shutdown
+			}
 		}
 	}
 	if(f_err_code) {				//There was an init error
@@ -202,11 +204,11 @@ int main(void)
 		print_string[0]=0x00;			//Set string length to 0
 	}
 	for(uint8_t n=0;n<PPG_CHANNELS;n++)
-		Empty_Buffer(&Buff[n]);			//Empty all the PPG buffers to sync all the data - buffers will have some data from autobrightness
-	Millis=0;					//Reset system uptime, we have 50 days before overflow
-	Sensors|=sensors_;				//Set the global sensors variable here to mark the detected sensors as present
+		Empty_Buffer(&Buff[n]);	//Empty all the PPG buffers to sync all the data - buffers will have some data from autobrightness
+	Millis = 0;					//Reset system uptime, we have 50 days before overflow
+	Sensors |= sensors_;		//Set the global sensors variable here to mark the detected sensors as present
 	while (1) {
-		Watchdog_Reset();			//Reset the watchdog each main loop iteration
+		Watchdog_Reset();		//Reset the watchdog each main loop iteration
 		while(!bytes_in_buff(&(Buff[0])))
 			__WFI();			//Wait for some PPG data
 		printf("%3f",(float)(data_counter++)/PPG_SAMPLE_RATE);//The time since PPG collection started
@@ -251,27 +253,29 @@ int main(void)
 			Undersaturation++;
 		else
 			Undersaturation=l;
-		if( Oversaturation>(uint8_t)(PPG_SAMPLE_RATE*0.25) ) {//250ms timeout
+		if( Oversaturation > (uint8_t)(PPG_SAMPLE_RATE * 0.25) ) {//250ms timeout
 			PPG_Automatic_Brightness_Control();//Fix the brightness
-			Oversaturation=0;
-			system_state=255;		//Marker to show we adjusted automatically
+			Oversaturation = 0;
+			//Marker to show we adjusted automatically
+			system_state = 255;		
 		}
-		if( Undersaturation>(uint8_t)(PPG_SAMPLE_RATE*1.00))//If we are supposed to have PPG but don't 
-			Shutdown_System=NO_SENSOR;	//We turn off if sensor is off for too long
+		if( Undersaturation > (uint8_t)(PPG_SAMPLE_RATE * 1.00)){
+			//If we are supposed to have PPG but don't 
+			Shutdown_System = NO_SENSOR;	//We turn off if sensor is off for too long
 		}
-		printf(",%d\n",system_state);		//Terminating newline
-		system_state=0;				//Reset this
-		if(file_opened  & 0x01) {
+		printf(",%d\n",system_state); //Terminating newline
+		system_state = 0;			  //Reset this
+		if(file_opened  & 0x01){
 			f_puts(print_string,&FATFS_logfile);
-			print_string[0]=0x00;		//Set string length to 0
+			print_string[0]=0x00;	//Set string length to 0
 		}
 		//Deal with file size - may need to preallocate some more
-		if(f_size(&FATFS_logfile)-f_tell(&FATFS_logfile)<(PRE_SIZE/2)) {//More than half way through the pre-allocated area
-			DWORD size=f_tell(&FATFS_logfile);
-			f_lseek(&FATFS_logfile, f_size(&FATFS_logfile)+PRE_SIZE);//preallocate another PRE_SIZE
+		if(f_size(&FATFS_logfile) - f_tell(&FATFS_logfile) < (PRE_SIZE/2)){//More than half way through the pre-allocated area
+			DWORD size = f_tell(&FATFS_logfile);
+			f_lseek(&FATFS_logfile, f_size(&FATFS_logfile) + PRE_SIZE);//preallocate another PRE_SIZE
 			f_lseek(&FATFS_logfile, size);	//Seek back to where we were before
 		}
-		if(Millis%1000>500)			//1Hz on/off flashing
+		if(Millis % 1000 > 500)			//1Hz on/off flashing
 			switch_leds_on();		//Flash the LED(s)
 		else
 			switch_leds_off();
